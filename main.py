@@ -4,6 +4,8 @@ from dotenv import load_dotenv
 import os
 import xml.etree.ElementTree as ET
 import pandas as pd
+from openpyxl import load_workbook
+from openpyxl.styles import Alignment
 
 
 def connect_to_splunk(username, password, host='localhost', port='8089', owner='admin', app='search', sharing='user'):
@@ -90,9 +92,11 @@ def dnsSearch(splunk_service, df, file_path, sheet_name):
                     break
 
             xml_result = str(job.results())
+            # print(xml_result)
             root = ET.fromstring(xml_result)
 
-            fqdn = ""
+            FQDNs = ""
+            fqdn_set = set()
             for result in root.findall('result'):
                 for field in result.findall('field'):
                     # 欄位名稱
@@ -102,16 +106,32 @@ def dnsSearch(splunk_service, df, file_path, sheet_name):
                         for value in field.findall('value'):
                             text_element = value.find('text')
                             if text_element is not None:
-                                fqdn += text_element.text + "\n"
+                                fqdn = text_element.text
+                                if fqdn not in fqdn_set:
+                                    fqdn_set.add(fqdn)
+                                    FQDNs += fqdn + "\n"
+
             print(ip)
-            print(fqdn + "\n")
-            return fqdn
+            print(FQDNs + "\n")
+            return FQDNs
         except Exception as e:
             return 'dnsSearch() Failed.'
 
     # 對每組 dest_ip 進行 DNS 查詢
     df['fqdn'] = df['dest_ip'].apply(get_fqdn)
     df.to_excel(file_path, sheet_name=sheet_name, index=False)
+
+    '''
+    # 美化表格 : 自動換行、置中對齊等等
+    wb = load_workbook(file_path)
+    ws = wb.active
+
+    for row in ws.iter_rows():
+        for cell in row:
+            cell.alignment = Alignment(wrap_text=True)
+
+    wb.save(file_path)
+    '''
 
 
 def main():
