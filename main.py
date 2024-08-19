@@ -1,3 +1,4 @@
+import numpy as np
 import splunklib.client as client
 from dotenv import load_dotenv
 import os
@@ -59,7 +60,6 @@ def output_excel(jobResult):
     # 去除 src_ip 重複儲存格
     df['src_ip'] = df['src_ip'].where(~df['src_ip'].duplicated())
     df.to_excel('output.xlsx', index=False)
-    print("Excel 文件已生成：output.xlsx")
 
 
 def run_normal_mode_search(splunk_service, search_string, payload={}):
@@ -74,6 +74,44 @@ def run_normal_mode_search(splunk_service, search_string, payload={}):
         output_excel(job.results())
     except Exception as e:
         print(e)
+
+
+def dnsSearch(splunk_service, df, file_path, sheet_name):
+    def get_fqdn(ip):
+        try:
+            search_query = f"search index=infoblox {ip} | head 1 | table dns_answer_name"
+            payload = {"exec_mode": "normal", "earliest_time": "-1d@d", "latest_time": "@d"}
+            job = splunk_service.jobs.create(search_query, **payload)
+
+            while True:
+                while not job.is_ready():
+                    pass
+                if job["isDone"] == "1":
+                    break
+
+            xml_result = str(job.results())
+            root = ET.fromstring(xml_result)
+
+            fqdn = ""
+            for result in root.findall('result'):
+                for field in result.findall('field'):
+                    # 欄位名稱
+                    key = field.get('k')
+                    # 欄位值
+                    if key == 'dns_answer_name':
+                        for value in field.findall('value'):
+                            text_element = value.find('text')
+                            if text_element is not None:
+                                fqdn += text_element.text + "\n"
+            print(ip)
+            print(fqdn + "\n")
+            return fqdn
+        except Exception as e:
+            return 'dnsSearch() Failed.'
+
+    # 對每組 dest_ip 進行 DNS 查詢
+    df['fqdn'] = df['dest_ip'].apply(get_fqdn)
+    df.to_excel(file_path, sheet_name=sheet_name, index=False)
 
 
 def main():
@@ -98,6 +136,21 @@ def main():
 
         payload = {"exec_mode": "normal", "earliest_time": "-1d@d", "latest_time": "@d"}
         run_normal_mode_search(splunk_service, search_string, payload)
+
+        # 在 dest_ip 欄位的右邊增加一個 fqdn 欄位
+        filePath = 'output.xlsx'
+        sheet_name = 'Sheet1'
+        df = pd.read_excel(filePath, sheet_name=sheet_name)
+
+        insert_index = 2
+        columnName = 'fqdn'
+        columnData = [np.nan] * len(df)  # 初始化為空值，長度與 DataFrame 行數匹配
+        df.insert(insert_index, columnName, columnData)
+        df.to_excel(filePath, sheet_name=sheet_name, index=False)
+
+        # 對每個 dest_ip 查詢 dns query
+        dnsSearch(splunk_service, df, filePath, sheet_name)
+        print("Excel 文件已生成：output.xlsx")
     except Exception as e:
         print(e)
 
