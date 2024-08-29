@@ -7,18 +7,22 @@ import pandas as pd
 from openpyxl import load_workbook
 from openpyxl.styles import Alignment
 import subprocess
+import ipaddress
 
 filePath = 'checkpoint.xlsx'
 
-def connect_to_splunk(username,password,host='localhost',port='8089',owner='admin',app='search',sharing='user'):
+
+def connect_to_splunk(username, password, host='localhost', port='8089', owner='admin', app='search', sharing='user'):
     try:
-        service = client.connect(host=host, port=port,username=username, password=password,owner=owner,app=app,sharing=sharing)
+        service = client.connect(host=host, port=port, username=username, password=password, owner=owner, app=app,
+                                 sharing=sharing)
         if service:
             print("Splunk service created successfully")
             print("------------------------------------")
         return service
     except Exception as e:
         print(e)
+
 
 def output_excel(jobResult):
     xmlData = str(jobResult)
@@ -63,9 +67,10 @@ def output_excel(jobResult):
     df['src_ip'] = df['src_ip'].where(~df['src_ip'].duplicated())
     df.to_excel(filePath, index=False)
 
-def fetch_daily_report(splunk_service,search_string,payload={}):
+
+def fetch_daily_report(splunk_service, search_string, payload={}):
     try:
-        job = splunk_service.jobs.create(search_string,**payload)
+        job = splunk_service.jobs.create(search_string, **payload)
         while True:
             while not job.is_ready():
                 pass
@@ -75,6 +80,17 @@ def fetch_daily_report(splunk_service,search_string,payload={}):
         output_excel(job.results())
     except Exception as e:
         print(e)
+
+
+def is_ip_matching(ip, domain_name):
+    # 取出域名的第一段
+    domain_part = domain_name.split('.')[0]
+
+    # 將 ip 轉成域名的格式，例如 10.10.10.10 轉成 10-10-10-10
+    ip_part = ip.replace('.', '-')
+
+    return ip_part == domain_part
+
 
 def nslookup(ip):
     try:
@@ -95,9 +111,22 @@ def nslookup(ip):
     except subprocess.CalledProcessError as e:
         return f"Error occurred: {e}"
 
+
+def isPrivate(ip):
+    try:
+        ip = ipaddress.ip_address(ip)
+    except ValueError:
+        return False
+
+    return ip.is_private
+
+
 def dnsSearch(splunk_service, df, file_path, sheet_name):
     def get_fqdn(ip):
         try:
+            if isPrivate(ip):
+                return "Private IP"
+
             search_query = f"search index=infoblox {ip} | head 1 | table dns_answer_name"
             payload = {"exec_mode": "normal", "earliest_time": "-1d@d", "latest_time": "@d"}
             job = splunk_service.jobs.create(search_query, **payload)
@@ -130,6 +159,11 @@ def dnsSearch(splunk_service, df, file_path, sheet_name):
             if FQDNs == "":
                 FQDNs += nslookup(ip)
 
+            if is_ip_matching(ip, FQDNs):
+                print(f"IP = {ip}")
+                print(f"Domain name = {FQDNs}")
+                return ""
+
             print(ip)
             print(FQDNs + "\n")
             return FQDNs
@@ -148,3 +182,52 @@ def dnsSearch(splunk_service, df, file_path, sheet_name):
     for row in ws.iter_rows():
         for cell in row:
             cell.alignment = Alignment(wrap_text=True)
+
+    wb.save(file_path)
+    '''
+
+
+def main():
+    try:
+        load_dotenv()
+        Username = os.getenv("username")
+        Password = os.getenv("password")
+        Host = os.getenv("host")
+
+        splunk_service = connect_to_splunk(username=Username, password=Password, host=Host)
+
+        # Daily Report 的語法
+        index = 'checkpoint'
+        search_query = (
+            f"search index={index} action=Drop src_ip IN (10.*,172.16.*,172.18.*,172.19.*,172.17.*,192.168.*) dest!=10.*"
+            "| eval dest_port=if(dest_port>1025,\"High Port(1025-65535)\",dest_port) "
+            "| stats count by src_ip dest_port dest_ip "
+            "| sort - count "
+            "| stats list(dest_port) as dest_port list(dest_ip) as dest_ip list(count) as count by src_ip "
+            "| sort - count "
+            "| table src_ip dest_ip dest_port count "
+            "| head 50")
+
+        payload = {"exec_mode": "normal", "earliest_time": "-1d@d", "latest_time": "@d"}
+        fetch_daily_report(splunk_service, search_query, payload)
+
+        sheet_name = 'Sheet1'
+        df = pd.read_excel(filePath, sheet_name=sheet_name)
+
+        # 在 dest_ip 欄位的右邊增加一個 fqdn 欄位
+        insert_index = 2
+        columnName = 'fqdn'
+        columnData = [np.nan] * len(df)  # 初始化為空值，長度與 DataFrame 行數匹配
+        df.insert(insert_index, columnName, columnData)
+        # df.to_excel(filePath, sheet_name=sheet_name, index=False)
+
+        # 對每個 dest_ip 查詢 dns query
+        dnsSearch(splunk_service, df, filePath, sheet_name)
+        print(f"Excel 文件已生成：{filePath}")
+
+    except Exception as e:
+        print(e)
+
+
+if __name__ == "__main__":
+    main()
