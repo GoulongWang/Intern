@@ -24,16 +24,16 @@ version=[Splunk Enterprise Version]
 
 ### 程式流程
 1. 在Splunk 上抓取「Checkpoint內對外阻擋TOP50: daily report」
-2. 輸出原始「Checkpoint內對外阻擋TOP50: daily report」Excel 檔 
+2. 輸出原始「Checkpoint內對外阻擋TOP50: daily report」Excel 檔 <br>
 ![origin_report.png](/img/origin_report.png)
 3. 在 dest_ip 欄位的右邊增加一個 **fqdn 欄位（Fully Qualified Domain Name）**，顯示目標 IP 的域名
 4. 透過 Splunk 查詢每個 dest_ip 的 DNS query
    1. 在公司的 DNS Server 查詢 Log <br>
-      Splunk 語法: **search index={DNS Server index} {ip} | head 1 | table dns_answer_name** <br>
+      Splunk 語法: **search index={DNS Server index} {ip} | head 1 | table dns_answer_name** <br><br>
       ![splunk.png](/img/splunk.png)
    2. 若 Splunk 中無紀錄，使用 nslookup 反查域名
    3. 過濾掉私有 IP 及無意義的域名，這些域名不需顯示在報表。 <br>
-      例如 : 包含目標 IP 的域名
+      例如 : 包含目標 IP 的域名 <br>
       host-**219-68-146-45**.dynamic.kbtelecom.net <br>
 	  guestnat-**104-133-122-101**.corp.google.com <br>
       rate-limited-proxy-**66-249-92-143**.google.com <br>
